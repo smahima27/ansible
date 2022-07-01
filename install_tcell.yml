@@ -1,0 +1,219 @@
+#install_tcell.yml
+# TCELL INSTALLATION
+
+- hosts: all 
+  become: yes
+  become_user: exari
+  tasks:
+    - name: checking if already installed
+      shell: |
+        /mnt/data/Ent/java11/bin/java -jar /mnt/data/tcell/tcellagent.jar test | grep "[SUCCESS] Successfully sent event to tCell."
+      register: installed
+      failed_when: installed.rc not in [ 0, 1 ]
+
+    - name: when tcell already installed
+      meta: end_play
+      when: installed.rc == 0  
+
+    - name: finding if tcell already installed
+      stat:
+        path: /mnt/data/tcell
+      register: tcell         
+
+    - name: if tcell is already present
+      shell: |
+        rm -rf /mnt/data/tcell
+      when: tcell.stat.exists
+
+    - name: download and unzipping tCell agent and config file
+      shell: |
+        cd /mnt/data
+        aws s3 cp s3://exari-installers/SRE/tcell-dev/tcell-jvmagent-1.16.0.zip .
+        unzip tcell-jvmagent-1.16.0.zip
+        cd /mnt/data/tcell
+        aws s3 cp s3://exari-installers/SRE/tcell-dev/tcell_agent.config . 
+    
+    - name: ensure jq is installed
+      yum:
+        name:
+          - jq
+        state: present
+    
+    - name: getting availability zone
+      shell: |
+        curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r .region
+      register: region
+      
+    - name: setting api id
+      shell: |
+          case "{{ region.stdout }}" in 
+              "eu-west-1")
+              echo "CLMAcoupadeveuwest1-HjD86"
+              ;;
+              "us-east-1")
+              echo "CLMACoupadevuseast1-oQZ4R"
+              ;;
+              "ap-southeast-2")
+              echo ""
+              ;;
+              "us-west-1")
+              echo ""
+              ;;
+          esac
+      register: apiid
+
+    - name: addind api id
+      replace:
+        path: /mnt/data/tcell/tcell_agent.config
+        regexp: 'APPID'
+        replace: "{{ apiid.stdout }}" 
+    
+    - name: adding api key
+      replace:
+        path: /mnt/data/tcell/tcell_agent.config
+        regexp: 'APIKEY'
+        replace: "AQQBBAG2WTafzdxNDoQmEbXosbOKRlzaUjK3QUyXMHJnPbPtPLDMZGbGaeJWGkM38SXs3bc" # add app-key in place of $
+
+    - name: finding CLMA version
+      shell: |
+          cd /mnt/data/Ent/tomcat/webapps/alfresco/WEB-INF/lib/ && ls exaricm-platform-jar-* | cut -c 22-23
+      register: version
+
+    - name: checking and adding catalinaopts in tomcat
+      lineinfile:
+        path: /mnt/data/Ent/tomcat/bin/setenv.sh
+        insertbefore: "^JAVA_OPTS"
+        firstmatch: yes
+        line: "CATALINA_OPTS=\"$CATALINA_OPTS -Dorg.apache.catalina.connector.RECYCLE_FACADES=true\""
+        state: present
+        backup: yes
+      register: catalina
+
+    - name: adding tcell if new relic is present
+      lineinfile:
+        path: /mnt/data/Ent/tomcat/bin/setenv.sh
+        regex: '(.*)javaagent:/mnt/data/newrelic/newrelic.jar(.*)'
+        state: present
+        line: 'JAVA_OPTS="-javaagent:/mnt/data/tcell/tcellagent.jar -javaagent:/mnt/data/newrelic/newrelic.jar $JAVA_OPTS"'
+        backup: yes
+      register: newrelic
+              
+    - name: adding tcell in tomcat without new relic
+      lineinfile:
+        path: /mnt/data/Ent/tomcat/bin/setenv.sh
+        insertbefore: "export JAVA_HOME"
+        line: "JAVA_OPTS=\"-javaagent:/mnt/data/tcell/tcellagent.jar $JAVA_OPTS\""
+        backup: yes
+      when: newrelic.changed == false
+     
+    - name: adding tcell if new relic is present tomcat_aps
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_aps/bin/setenv.sh
+        regex: '(.*)javaagent:/mnt/data/newrelic/newrelic.jar(.*)'
+        state: present
+        backup: yes
+        line: 'JAVA_OPTS="-javaagent:/mnt/data/tcell/tcellagent.jar -javaagent:/mnt/data/newrelic/newrelic.jar $JAVA_OPTS"'
+      register: newrelictom_aps
+      when: (version.stdout| int )>30
+
+    - name: adding tcell in tomcat_aps without new relic for updated instance
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_aps/bin/setenv.sh
+        insertbefore: "export JAVA_HOME"
+        line: "JAVA_OPTS=\"-javaagent:/mnt/data/tcell/tcellagent.jar $JAVA_OPTS\""
+        backup: yes
+      when: (newrelictom_aps.changed == false) and ((version.stdout| int )>30)
+      
+
+    - name: adding tcell if new relic is present tomcat_docgen
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_docgen/bin/setenv.sh
+        regex: '(.*)javaagent:/mnt/data/newrelic/newrelic.jar(.*)'
+        state: present
+        line: 'JAVA_OPTS="-javaagent:/mnt/data/tcell/tcellagent.jar -javaagent:/mnt/data/newrelic/newrelic.jar $JAVA_OPTS"'
+        backup: yes
+      register: newrelictomcat_docgen
+      when: (version.stdout| int )>30
+      
+
+    - name: adding tcell in tomcat_docgen without new relic for updated instance
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_docgen/bin/setenv.sh
+        insertbefore: "export JAVA_HOME"
+        line: "JAVA_OPTS=\"-javaagent:/mnt/data/tcell/tcellagent.jar $JAVA_OPTS\""
+        backup: yes
+      when: (newrelictomcat_docgen.changed == false) and ((version.stdout| int )>30)
+      
+
+    - name: adding tcell if new relic is present tomcat_jasper
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_jasper/bin/setenv.sh
+        regex: '(.*)javaagent:/mnt/data/newrelic/newrelic.jar(.*)'
+        state: present
+        line: 'JAVA_OPTS="-javaagent:/mnt/data/tcell/tcellagent.jar -javaagent:/mnt/data/newrelic/newrelic.jar $JAVA_OPTS"'
+        backup: yes
+      register: newrelictomcat_jasper
+      when: (version.stdout| int )>30
+
+    - name: adding tcell in tomcat_jasper without new relic for updated instance
+      lineinfile:
+        path: /mnt/data/Ent/tomcat_jasper/bin/setenv.sh
+        insertbefore: "export JAVA_HOME"
+        line: "JAVA_OPTS=\"-javaagent:/mnt/data/tcell/tcellagent.jar $JAVA_OPTS\""
+        backup: yes
+      when: (newrelictomcat_jasper.changed == false) and ((version.stdout| int )>30)
+
+    - name: checking if installed
+      shell: |
+        /mnt/data/Ent/java11/bin/java -jar /mnt/data/tcell/tcellagent.jar test| grep "[SUCCESS] Successfully sent event to tCell."
+      register: success
+      failed_when: success.rc not in [ 0, 1 ]
+  
+    - name: successfully installed
+      debug:
+        msg: "successfully installed" 
+      when: ((success.rc |int) == 1) and (version.stdout|int >30)
+      notify: system restart all
+
+    - name: successfully installed
+      debug:
+        msg: "successfully installed" 
+      when: (success.rc |int) == 1
+      notify: system restart tomcat
+
+  handlers:
+    - name: stop and start tomcat
+      shell: |
+        if test -f /mnt/data/Ent/tomcat/temp/catalina.pid ; then
+           kill  $(cat /mnt/data/Ent/tomcat/temp/catalina.pid)
+        fi
+        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh stop
+        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
+      listen: system restart tomcat
+
+    - name: stop and start alltomcat
+      shell: |
+        if test -f /mnt/data/Ent/tomcat/temp/catalina.pid ; then
+           kill  $(cat /mnt/data/Ent/tomcat/temp/catalina.pid)
+        fi
+        nohup /mnt/data/Ent/scripts/tomcat_ctl.sh stop
+        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
+        if test -f /mnt/data/Ent/tomcat_jasper/temp/catalina.pid ; then
+           kill  $(cat /mnt/data/Ent/tomcat_jasper/temp/catalina.pid)
+        fi
+        nohup /mnt/data/Ent/scripts/tomcat_jasper_ctl.sh stop
+        nohup /mnt/data/Ent/scripts/tomcat_jasper_ctl.sh start
+        
+        if test -f /mnt/data/Ent/tomcat_aps/temp/catalina.pid ; then
+           kill $(cat /mnt/data/Ent/tomcat_aps/temp/catalina.pid) 
+        fi
+        nohup /mnt/data/Ent/scripts/tomcat_aps_ctl.sh stop
+        nohup /mnt/data/Ent/scripts/tomcat_aps_ctl.sh start
+        
+        if test -f /mnt/data/Ent/tomcat_docgen/temp/catalina.pid ; then
+           kill $(cat /mnt/data/Ent/tomcat_docgen/temp/catalina.pid)
+        fi
+        nohup /mnt/data/Ent/scripts/tomcat_docgen_ctl.sh stop
+        nohup /mnt/data/Ent/scripts/tomcat_docgen_ctl.sh start
+               
+      listen: system restart all 
