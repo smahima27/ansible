@@ -187,8 +187,8 @@
         if test -f /mnt/data/Ent/tomcat/temp/catalina.pid ; then
            kill  $(cat /mnt/data/Ent/tomcat/temp/catalina.pid)
         fi
-        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh stop
-        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
+        nohup /mnt/data/Ent/scripts/tomcat_ctl.sh stop
+        nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
       listen: system restart tomcat
 
     - name: stop and start alltomcat
@@ -197,7 +197,7 @@
            kill  $(cat /mnt/data/Ent/tomcat/temp/catalina.pid)
         fi
         nohup /mnt/data/Ent/scripts/tomcat_ctl.sh stop
-        sudo -u exari nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
+        nohup /mnt/data/Ent/scripts/tomcat_ctl.sh start
         if test -f /mnt/data/Ent/tomcat_jasper/temp/catalina.pid ; then
            kill  $(cat /mnt/data/Ent/tomcat_jasper/temp/catalina.pid)
         fi
